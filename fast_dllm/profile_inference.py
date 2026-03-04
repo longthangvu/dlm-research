@@ -1,20 +1,28 @@
 import argparse
 import json
 import os
-from pathlib import Path
 import time
-import warnings
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 @dataclass
 class ProfileResult:
+    model_path: str
+    prompt_mode: str
     prompt_len: int
     gen_length: int
     batch_size: int
+    warmup: int
+    repetitions: int
+    use_torch_profiler: bool
+    do_compile: bool
+    offload_dir: Optional[str]
+    decode_mode: str
+    block_size: int
+    threshold: float
     total_time_s: float
     per_token_time_ms: float
     tokens_per_s: float
@@ -66,12 +74,13 @@ def _format_prompt(tokenizer, prompt_text: str, use_chat_template: bool) -> str:
         return " "
     return prompt_text
 
-def _load_model(model_path: str, do_compile: bool):
+def _load_model(model_path: str, do_compile: bool, offload_dir: Optional[str]):
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         trust_remote_code=True,
         torch_dtype="auto",
-        device_map="auto"
+        device_map="auto",
+        offload_folder=offload_dir,
     )
     model.eval()
     if do_compile: model.compile()
@@ -94,7 +103,7 @@ def run_profile(
     do_compile: bool,
     offload_dir: Optional[str],
 ) -> Tuple[ProfileResult, Optional[str]]:
-    model = _load_model(model_path=model_path, do_compile=do_compile)
+    model = _load_model(model_path=model_path, do_compile=do_compile, offload_dir=offload_dir)
     tokenizer = None
     can_skip_tokenizer = (not use_chat_template) and (not prompt_text.strip())
 
@@ -188,9 +197,19 @@ def run_profile(
         max_reserved = torch.cuda.max_memory_reserved() / (1024 ** 2)
 
     result = ProfileResult(
+        model_path=model_path,
+        prompt_mode=prompt_mode,
         prompt_len=int(model_inputs["input_ids"].shape[1]),
         gen_length=gen_length,
         batch_size=batch_size,
+        warmup=warmup,
+        repetitions=repetitions,
+        use_torch_profiler=use_torch_profiler,
+        do_compile=do_compile,
+        offload_dir=offload_dir,
+        decode_mode="fast_dllm_parallel_decode",
+        block_size=block_size,
+        threshold=threshold,
         total_time_s=avg_time_s,
         per_token_time_ms=per_token_time_ms,
         tokens_per_s=tokens_per_s,

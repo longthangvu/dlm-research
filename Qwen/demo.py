@@ -5,7 +5,8 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 token = os.environ['HF_TOKEN']
 
 # model_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
-model_name = "Qwen/Qwen3-8B-FP8"
+model_name = "Qwen/Qwen3-1.7B"
+
 offload_folder = os.path.join(os.path.dirname(__file__), model_name, ".offload_qwen3")
 os.makedirs(offload_folder, exist_ok=True)
 config = AutoConfig.from_pretrained(model_name, token=token)

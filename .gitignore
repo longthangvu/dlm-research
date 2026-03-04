@@ -4,3 +4,7 @@ venv
 .gradio
 
 **profiles**
+.codex
+AGENTS.md
+
+benchmarks/results

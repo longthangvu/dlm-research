@@ -10,6 +10,7 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="auto",
     trust_remote_code=True
 )
+model.compile()
 
 tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 

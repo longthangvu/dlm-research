@@ -1,9 +1,7 @@
 import argparse
 import json
 import os
-from pathlib import Path
 import time
-import warnings
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -12,9 +10,17 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 @dataclass
 class ProfileResult:
+    model_path: str
+    prompt_mode: str
     prompt_len: int
     gen_length: int
     batch_size: int
+    warmup: int
+    repetitions: int
+    use_torch_profiler: bool
+    do_compile: bool
+    offload_dir: Optional[str]
+    decode_mode: str
     total_time_s: float
     per_token_time_ms: float
     tokens_per_s: float
@@ -145,7 +151,8 @@ def run_profile(
         if torch.cuda.is_available():
             activities.append(torch.profiler.ProfilerActivity.CUDA)
 
-        schedule = torch.profiler.schedule(wait=1, warmup=warmup, active=repetitions, repeat=1)
+        wait_steps = 1
+        schedule = torch.profiler.schedule(wait=wait_steps, warmup=warmup, active=repetitions, repeat=1)
         on_trace_ready = torch.profiler.tensorboard_trace_handler(run_dir, worker_name=None)
         with torch.profiler.profile(
             activities=activities,
@@ -157,13 +164,16 @@ def run_profile(
             with_flops=True,
             with_modules=True,
         ) as prof:
-            for _ in range(repetitions):
+            active_start_step = wait_steps + warmup
+            total_profile_steps = active_start_step + repetitions
+            for step_idx in range(total_profile_steps):
                 _sync()
                 start = time.perf_counter()
                 model.generate(**model_inputs, max_new_tokens=gen_length, do_sample=False)
                 _sync()
                 end = time.perf_counter()
-                total_time += (end - start)
+                if step_idx >= active_start_step:
+                    total_time += (end - start)
                 prof.step()
     else:
         for _ in range(repetitions):
@@ -186,9 +196,17 @@ def run_profile(
         max_reserved = torch.cuda.max_memory_reserved() / (1024 ** 2)
 
     result = ProfileResult(
+        model_path=model_path,
+        prompt_mode=prompt_mode,
         prompt_len=int(model_inputs["input_ids"].shape[1]),
         gen_length=gen_length,
         batch_size=batch_size,
+        warmup=warmup,
+        repetitions=repetitions,
+        use_torch_profiler=use_torch_profiler,
+        do_compile=do_compile,
+        offload_dir=offload_dir,
+        decode_mode="greedy_do_sample_false",
         total_time_s=avg_time_s,
         per_token_time_ms=per_token_time_ms,
         tokens_per_s=tokens_per_s,
@@ -247,7 +265,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Profile Qwen causal-LM inference (TensorBoard torch.profiler)"
     )
-    parser.add_argument("--model", default="Qwen/Qwen3-30B-A3B-Instruct-2507", help="HF path or local path")
+    parser.add_argument("--model", default="Qwen/Qwen3-1.7B", help="HF path or local path")
     parser.add_argument("--prompt-mode", choices=["free", "prompted", "dual"], default="free")
     parser.add_argument("--prompt", default="Hello", help="Prompt text for prompted mode")
     parser.add_argument("--prompt-free-text", default="", help="Prompt text for prompt-free mode")
