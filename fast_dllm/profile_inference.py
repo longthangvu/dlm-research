@@ -1,12 +1,12 @@
 import argparse
-import json
-import os
-import time
+import json, os, time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+torch.set_float32_matmul_precision('high')
 
 @dataclass
 class ProfileResult:
@@ -159,11 +159,11 @@ def run_profile(
             activities=activities,
             schedule=schedule,
             on_trace_ready=on_trace_ready,
-            record_shapes=False,
+            # record_shapes=False,
             profile_memory=True,
             with_stack=True,
-            with_flops=True,
-            with_modules=True,
+            # with_flops=True,
+            # with_modules=True,
         ) as prof:
             active_start_step = wait_steps + warmup
             total_profile_steps = active_start_step + repetitions
@@ -177,6 +177,10 @@ def run_profile(
                     total_time += (end - start)
                 prof.step()
     else:
+        for _ in range(warmup):
+            _sync()
+            model.generate(**model_inputs, max_new_tokens=gen_length, small_block_size=block_size, threshold=threshold)
+            _sync()
         for _ in range(repetitions):
             _sync()
             start = time.perf_counter()

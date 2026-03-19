@@ -1,16 +1,7 @@
-import argparse
-import csv
-import json
-import os
-import re
-import subprocess
-import sys
-import time
+import argparse, csv, json, re, shlex
+import os, sys, time, subprocess
 from dataclasses import dataclass
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Set
+from typing import Dict, List, Optional, Set
 
 from transformers import AutoTokenizer
 
@@ -93,8 +84,37 @@ def extract_json_block(stdout_text: str) -> Dict[str, object]:
     return json.loads(match.group(0))
 
 
+def write_subprocess_error_log(
+    error_dir: str,
+    run_name: str,
+    cmd: List[str],
+    stdout_text: str,
+    stderr_text: str,
+    returncode: Optional[int],
+) -> str:
+    os.makedirs(error_dir, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(error_dir, f"{run_name}_{stamp}.log")
+    lines = [
+        f"run_name: {run_name}",
+        f"returncode: {returncode}",
+        f"command: {shlex.join(cmd)}",
+        "",
+        "=== STDOUT ===",
+        stdout_text or "<empty>",
+        "",
+        "=== STDERR ===",
+        stderr_text or "<empty>",
+        "",
+    ]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return path
+
+
 def run_profile(
     config: RunConfig,
+    run_name: str,
     prompt_text: str,
     gen_length: int,
     batch_size: int,
@@ -102,6 +122,7 @@ def run_profile(
     repetitions: int,
     use_profiler: bool,
     profiler_dir: str,
+    error_dir: str,
     do_compile: bool,
     block_size: int,
     threshold: float,
@@ -135,7 +156,22 @@ def run_profile(
     if config.model_key == "fast_dllm":
         cmd.extend(["--block-size", str(block_size), "--threshold", str(threshold)])
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as exc:
+        log_path = write_subprocess_error_log(
+            error_dir=error_dir,
+            run_name=run_name,
+            cmd=cmd,
+            stdout_text=exc.stdout or "",
+            stderr_text=exc.stderr or "",
+            returncode=exc.returncode,
+        )
+        raise RuntimeError(
+            f"{run_name} failed with exit code {exc.returncode}. "
+            f"Subprocess output was written to {log_path}."
+        ) from exc
+
     payload = extract_json_block(proc.stdout)
     trace_match = re.search(r"TensorBoard trace dir(?: \([^)]+\))?:\s*(.+)", proc.stdout)
     if trace_match:
@@ -183,6 +219,7 @@ def main() -> None:
     stamp = time.strftime("%Y%m%d_%H%M%S")
     run_root = os.path.join(args.results_dir, stamp)
     traces_root = os.path.join(run_root, "traces")
+    error_root = os.path.join(run_root, "errors")
     os.makedirs(traces_root, exist_ok=True)
 
     configs = [
@@ -217,6 +254,7 @@ def main() -> None:
             prompt_text = prompt_cache[config.model_key][target_context]
             baseline = run_profile(
                 config=config,
+                run_name=f"{config.model_key}_baseline_ctx{target_context}",
                 prompt_text=prompt_text,
                 gen_length=args.gen_length,
                 batch_size=args.batch_size,
@@ -224,6 +262,7 @@ def main() -> None:
                 repetitions=args.repetitions,
                 use_profiler=False,
                 profiler_dir=traces_root,
+                error_dir=error_root,
                 do_compile=args.do_compile,
                 block_size=args.fast_dllm_block_size,
                 threshold=args.fast_dllm_threshold,
@@ -236,6 +275,7 @@ def main() -> None:
             if target_context in profile_bins:
                 traced = run_profile(
                     config=config,
+                    run_name=f"{config.model_key}_profiled_ctx{target_context}",
                     prompt_text=prompt_text,
                     gen_length=args.gen_length,
                     batch_size=args.batch_size,
@@ -243,6 +283,7 @@ def main() -> None:
                     repetitions=args.repetitions,
                     use_profiler=True,
                     profiler_dir=traces_root,
+                    error_dir=error_root,
                     do_compile=args.do_compile,
                     block_size=args.fast_dllm_block_size,
                     threshold=args.fast_dllm_threshold,

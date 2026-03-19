@@ -1,7 +1,5 @@
 import argparse
-import json
-import os
-import time
+import json, os, time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -162,8 +160,8 @@ def run_profile(
                                     record_shapes=False,
                                     profile_memory=True,
                                     with_stack=True,
-                                    with_flops=True,
-                                    with_modules=True,
+                                    # with_flops=True,
+                                    # with_modules=True,
                                     ) as prof:
             for _ in range(repetitions):
                 _sync()

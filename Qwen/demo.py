@@ -2,7 +2,7 @@ import os
 
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-token = os.environ['HF_TOKEN']
+token = os.getenv("HF_TOKEN")
 
 # model_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 model_name = "Qwen/Qwen3-1.7B"
